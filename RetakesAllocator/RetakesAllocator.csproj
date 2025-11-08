@@ -16,7 +16,13 @@
     <ItemGroup>
         <ProjectReference Include="..\RetakesAllocatorCore\RetakesAllocatorCore.csproj" />
     </ItemGroup>
-
+    
+    <ItemGroup>
+        <Reference Include="T3MenuSharedAPI">
+            <HintPath>3rd_party\T3MenuSharedAPI.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+    </ItemGroup>
     <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition=" '$(CopyPath)' != '' and $(Configuration) == 'Debug' and '$(OS)' == 'Windows_NT'">
         <Exec Command="powershell mkdir -p &quot;$(CopyPath)&quot;" ContinueOnError="true" />
         <Exec Command="powershell Copy-Item -Recurse -Force &quot;$(TargetDir)* $(CopyPath)&quot; "/>

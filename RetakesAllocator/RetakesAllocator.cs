@@ -22,7 +22,7 @@ using RetakesAllocator.AdvancedMenus;
 using static RetakesAllocatorCore.PluginInfo;
 using RetakesPluginShared;
 using RetakesPluginShared.Events;
-using KitsuneMenu.Core;
+using T3MenuSharedApi;
 
 namespace RetakesAllocator;
 
@@ -51,12 +51,10 @@ public class RetakesAllocator : BasePlugin
     public override void Load(bool hotReload)
     {
         Configs.Shared.Module = ModuleDirectory;
-        MenuFileSystem.Initialize(ModuleDirectory);
 
         Log.Debug($"Loaded. Hot reload: {hotReload}");
         ResetState();
         Batteries.Init();
-        KitsuneMenu.KitsuneMenu.Init();
 
         RegisterListener<Listeners.OnMapStart>(mapName =>
         {
@@ -139,7 +137,6 @@ public class RetakesAllocator : BasePlugin
     public override void Unload(bool hotReload)
     {
         Log.Debug("Unloaded");
-        KitsuneMenu.KitsuneMenu.Cleanup();
         ResetState(loadConfig: false);
         Queries.Disconnect();
 
@@ -149,6 +146,17 @@ public class RetakesAllocator : BasePlugin
         {
             CustomFunctions.CCSPlayer_ItemServices_CanAcquireFunc?.Unhook(OnWeaponCanAcquire, HookMode.Pre);
         }
+    }
+
+    public override void OnAllPluginsLoaded(bool hotReload)
+    {
+        var t3 = new PluginCapability<IT3MenuManager>("t3menu:manager").Get();
+        if (t3 is null)
+        {
+            throw new Exception("T3MenuAPI not found.");
+        }
+
+        _advancedGunMenu.MenuManager = t3;
     }
 
     private IRetakesPluginEventSender GetRetakesPluginEventSender()
@@ -199,7 +207,7 @@ public class RetakesAllocator : BasePlugin
             return;
         }
 
-        _allocatorMenuManager.OpenMenuForPlayer(player!, MenuType.NextRoundVote);
+        _allocatorMenuManager.OpenMenuForPlayer(player!, global::RetakesAllocator.Menus.MenuType.NextRoundVote);
     }
 
     [ConsoleCommand("css_gun")]
@@ -736,7 +744,7 @@ public class RetakesAllocator : BasePlugin
         Log.Debug($"Handling allocate event");
         Server.ExecuteCommand("mp_max_armor 0");
 
-        var menu = _allocatorMenuManager.GetMenu<VoteMenu>(MenuType.NextRoundVote);
+        var menu = _allocatorMenuManager.GetMenu<VoteMenu>(global::RetakesAllocator.Menus.MenuType.NextRoundVote);
         menu.GatherAndHandleVotes();
 
         var allPlayers = Utilities.GetPlayers()
