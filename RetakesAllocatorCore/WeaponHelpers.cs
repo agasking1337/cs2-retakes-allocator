@@ -652,6 +652,8 @@ public static class WeaponHelpers
         var secondaryWeaponAllocation = roundType switch
         {
             RoundType.Pistol => WeaponAllocationType.PistolRound,
+            RoundType.HalfBuy => WeaponAllocationType.PistolRound,
+            RoundType.FullBuy => WeaponAllocationType.Secondary,
             _ => WeaponAllocationType.Secondary,
         };
 

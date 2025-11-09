@@ -115,18 +115,60 @@ public class AdvancedGunMenu
     private async Task<GunMenuData?> BuildMenuDataAsync(CsTeam team, ulong steamId)
     {
         var userSettings = await Queries.GetUserSettings(steamId);
-        var primaryOptions = WeaponHelpers
-            .GetPossibleWeaponsForAllocationType(WeaponAllocationType.FullBuyPrimary, team)
-            .ToList();
-        var halfBuyPrimaryOptions = WeaponHelpers
-            .GetPossibleWeaponsForAllocationType(WeaponAllocationType.HalfBuyPrimary, team)
-            .ToList();
-        var secondaryOptions = WeaponHelpers
-            .GetPossibleWeaponsForAllocationType(WeaponAllocationType.Secondary, team)
-            .ToList();
-        var pistolOptions = WeaponHelpers
-            .GetPossibleWeaponsForAllocationType(WeaponAllocationType.PistolRound, team)
-            .ToList();
+        var config = Configs.GetConfigData();
+        var useUnion = config.EnableAllWeaponsForEveryone;
+
+        List<CsItem> primaryOptions;
+        List<CsItem> halfBuyPrimaryOptions;
+        List<CsItem> secondaryOptions;
+        List<CsItem> pistolOptions;
+
+        if (useUnion)
+        {
+            var t = CsTeam.Terrorist;
+            var ct = CsTeam.CounterTerrorist;
+            primaryOptions = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.FullBuyPrimary, t)
+                .Union(WeaponHelpers.GetPossibleWeaponsForAllocationType(WeaponAllocationType.FullBuyPrimary, ct))
+                .Distinct()
+                .ToList();
+            halfBuyPrimaryOptions = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.HalfBuyPrimary, t)
+                .Union(WeaponHelpers.GetPossibleWeaponsForAllocationType(WeaponAllocationType.HalfBuyPrimary, ct))
+                .Distinct()
+                .ToList();
+            secondaryOptions = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.Secondary, t)
+                .Union(WeaponHelpers.GetPossibleWeaponsForAllocationType(WeaponAllocationType.Secondary, ct))
+                .Distinct()
+                .ToList();
+            pistolOptions = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.PistolRound, t)
+                .Union(WeaponHelpers.GetPossibleWeaponsForAllocationType(WeaponAllocationType.PistolRound, ct))
+                .Distinct()
+                .ToList();
+        }
+        else
+        {
+            var primaryOptionsRaw = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.FullBuyPrimary, team)
+                .ToList();
+            var halfBuyPrimaryOptionsRaw = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.HalfBuyPrimary, team)
+                .ToList();
+            var secondaryOptionsRaw = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.Secondary, team)
+                .ToList();
+            var pistolOptionsRaw = WeaponHelpers
+                .GetPossibleWeaponsForAllocationType(WeaponAllocationType.PistolRound, team)
+                .ToList();
+
+            // Team-strict lists
+            primaryOptions = FilterByRoundAndTeam(primaryOptionsRaw, RoundType.FullBuy, team, WeaponAllocationType.FullBuyPrimary);
+            halfBuyPrimaryOptions = FilterByRoundAndTeam(halfBuyPrimaryOptionsRaw, RoundType.HalfBuy, team, WeaponAllocationType.HalfBuyPrimary);
+            secondaryOptions = FilterByRoundAndTeam(secondaryOptionsRaw, RoundType.FullBuy, team, WeaponAllocationType.Secondary);
+            pistolOptions = FilterByRoundAndTeam(pistolOptionsRaw, RoundType.Pistol, team, WeaponAllocationType.PistolRound);
+        }
 
         var currentPrimary = userSettings?.GetWeaponPreference(team, WeaponAllocationType.FullBuyPrimary) ??
                              GetDefaultWeapon(team, WeaponAllocationType.FullBuyPrimary, primaryOptions);
@@ -136,6 +178,24 @@ public class AdvancedGunMenu
                                GetDefaultWeapon(team, WeaponAllocationType.Secondary, secondaryOptions);
         var currentPistol = userSettings?.GetWeaponPreference(team, WeaponAllocationType.PistolRound) ??
                             GetDefaultWeapon(team, WeaponAllocationType.PistolRound, pistolOptions);
+
+        // Coerce saved selections to valid lists
+        if (currentPrimary.HasValue && !primaryOptions.Contains(currentPrimary.Value))
+        {
+            currentPrimary = GetDefaultWeapon(team, WeaponAllocationType.FullBuyPrimary, primaryOptions);
+        }
+        if (currentHalfBuyPrimary.HasValue && !halfBuyPrimaryOptions.Contains(currentHalfBuyPrimary.Value))
+        {
+            currentHalfBuyPrimary = GetDefaultWeapon(team, WeaponAllocationType.HalfBuyPrimary, halfBuyPrimaryOptions);
+        }
+        if (currentSecondary.HasValue && !secondaryOptions.Contains(currentSecondary.Value))
+        {
+            currentSecondary = GetDefaultWeapon(team, WeaponAllocationType.Secondary, secondaryOptions);
+        }
+        if (currentPistol.HasValue && !pistolOptions.Contains(currentPistol.Value))
+        {
+            currentPistol = GetDefaultWeapon(team, WeaponAllocationType.PistolRound, pistolOptions);
+        }
 
         var preferredSniper = userSettings?.GetWeaponPreference(team, WeaponAllocationType.Preferred);
 
@@ -157,6 +217,20 @@ public class AdvancedGunMenu
         };
     }
 
+    private static List<CsItem> FilterByRoundAndTeam(IEnumerable<CsItem> items, RoundType round, CsTeam team, WeaponAllocationType expectedType)
+    {
+        var filtered = new List<CsItem>();
+        foreach (var item in items)
+        {
+            var at = WeaponHelpers.GetWeaponAllocationTypeForWeaponAndRound(round, team, item);
+            if (at.HasValue && at.Value == expectedType)
+            {
+                filtered.Add(item);
+            }
+        }
+        return filtered;
+    }
+
     private void ShowMenu(CCSPlayerController player, GunMenuData data)
     {
         if (MenuManager == null)
@@ -172,71 +246,12 @@ public class AdvancedGunMenu
         var isVip = Helpers.IsVip(player);
         var canUseEnemyStuff = config.EnableEnemyStuffPreference && Helpers.HasEnemyStuffPermission(player);
 
-        if (data.PrimaryOptions.Count > 0)
+        var fullBuyTitle = RoundTypeHelpers.TranslateRoundTypeName(RoundType.FullBuy);
+        menu.AddOption(fullBuyTitle, (ply, opt) =>
         {
-            menu.AddOption(Translator.Instance["weapon_type.primary"], (ply, opt) =>
-            {
-                var sub = BuildWeaponSubMenu(
-                    data,
-                    Translator.Instance["weapon_type.primary"],
-                    data.PrimaryOptions,
-                    data.CurrentPrimary,
-                    (p, d, w) =>
-                    {
-                        d.CurrentPrimary = w;
-                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.FullBuy, w);
-                    });
-                MenuManager.OpenSubMenu(ply, sub);
-            });
-        }
-        else
-        {
-            menu.AddOption($"{Translator.Instance["weapon_type.primary"]}: {Translator.Instance["guns_menu.unavailable"]}", (ply, opt) => { });
-        }
-
-        if (data.SecondaryOptions.Count > 0)
-        {
-            menu.AddOption(Translator.Instance["weapon_type.secondary"], (ply, opt) =>
-            {
-                var sub = BuildWeaponSubMenu(
-                    data,
-                    Translator.Instance["weapon_type.secondary"],
-                    data.SecondaryOptions,
-                    data.CurrentSecondary,
-                    (p, d, w) =>
-                    {
-                        d.CurrentSecondary = w;
-                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.FullBuy, w);
-                    });
-                MenuManager.OpenSubMenu(ply, sub);
-            });
-        }
-        else
-        {
-            menu.AddOption($"{Translator.Instance["weapon_type.secondary"]}: {Translator.Instance["guns_menu.unavailable"]}", (ply, opt) => { });
-        }
-
-        if (data.PistolOptions.Count > 0)
-        {
-            menu.AddOption(Translator.Instance["weapon_type.pistol"], (ply, opt) =>
-            {
-                var sub = BuildWeaponSubMenu(
-                    data,
-                    Translator.Instance["weapon_type.pistol"],
-                    data.PistolOptions,
-                    data.CurrentPistol,
-                    (p, d, w) =>
-                    {
-                        d.CurrentPistol = w;
-                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.Pistol, w);
-                    });
-                MenuManager.OpenSubMenu(ply, sub);
-            });
-        }
-        else
-        {
-            menu.AddOption($"{Translator.Instance["weapon_type.pistol"]}: {Translator.Instance["guns_menu.unavailable"]}", (ply, opt) => { });
-        }
+            var sub = BuildFullBuySubMenu(ply, data, isVip, canUseEnemyStuff, config.EnableZeusPreference);
+            MenuManager.OpenSubMenu(ply, sub);
+        });
 
         var halfBuyTitle = RoundTypeHelpers.TranslateRoundTypeName(RoundType.HalfBuy);
         menu.AddOption(halfBuyTitle, (ply, opt) =>
@@ -245,47 +260,12 @@ public class AdvancedGunMenu
             MenuManager.OpenSubMenu(ply, sub);
         });
 
-        if (isVip)
+        var pistolTitle = RoundTypeHelpers.TranslateRoundTypeName(RoundType.Pistol);
+        menu.AddOption(pistolTitle, (ply, opt) =>
         {
-            menu.AddOption(Translator.Instance["guns_menu.sniper_label"], (ply, opt) =>
-            {
-                var sub = BuildSniperSubMenu(data);
-                MenuManager.OpenSubMenu(ply, sub);
-            });
-        }
-
-        if (canUseEnemyStuff)
-        {
-            menu.AddOption(Translator.Instance["guns_menu.enemy_stuff_label"], (ply, opt) =>
-            {
-                var sub = BuildEnemyStuffSubMenu(data);
-                MenuManager.OpenSubMenu(ply, sub);
-            });
-        }
-
-        if (config.EnableZeusPreference)
-        {
-            var zeusChoices = new[]
-            {
-                Translator.Instance["guns_menu.zeus_choice_disable"],
-                Translator.Instance["guns_menu.zeus_choice_enable"]
-            };
-
-            menu.AddBoolOption(
-                Translator.Instance["guns_menu.zeus_label"],
-                defaultValue: data.ZeusEnabled,
-                (ply, option) =>
-                {
-                    var enabled = false;
-                    if (option is IT3Option opt && opt.DefaultValue is bool b)
-                    {
-                        enabled = b;
-                    }
-                    var choice = enabled ? zeusChoices[1] : zeusChoices[0];
-                    HandleZeusChoice(ply, data, choice, zeusChoices);
-                    MenuManager.Refresh();
-                });
-        }
+            var sub = BuildPistolSubMenu(data);
+            MenuManager.OpenSubMenu(ply, sub);
+        });
 
         menu.AddOption(Translator.Instance["menu.exit"], (ply, opt) => { });
         MenuManager.OpenMainMenu(player, menu);
@@ -309,7 +289,58 @@ public class AdvancedGunMenu
                     {
                         d.CurrentHalfBuyPrimary = w;
                         ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.HalfBuy, w);
-                    });
+                    },
+                    ply2 => BuildHalfBuySubMenu(data)
+                );
+                MenuManager!.OpenSubMenu(ply, wsub);
+            });
+        }
+
+        if (data.SecondaryOptions.Count > 0)
+        {
+            sub.AddOption(Translator.Instance["weapon_type.secondary"], (ply, opt) =>
+            {
+                var wsub = BuildWeaponSubMenu(
+                    data,
+                    Translator.Instance["weapon_type.secondary"],
+                    data.SecondaryOptions,
+                    data.CurrentPistol,
+                    (p, d, w) =>
+                    {
+                        d.CurrentPistol = w;
+                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.Pistol, w);
+                    },
+                    ply2 => BuildHalfBuySubMenu(data)
+                );
+                MenuManager!.OpenSubMenu(ply, wsub);
+            });
+        }
+
+        sub.AddOption(Translator.Instance["menu.exit"], (ply, opt) => { ShowMenu(ply, data); });
+        return sub;
+    }
+
+    private IT3Menu BuildFullBuySubMenu(CCSPlayerController player, GunMenuData data, bool isVip, bool canUseEnemyStuff, bool zeusEnabledSetting)
+    {
+        var title = RoundTypeHelpers.TranslateRoundTypeName(RoundType.FullBuy);
+        var sub = MenuManager!.CreateMenu(title, isSubMenu: true);
+
+        if (data.PrimaryOptions.Count > 0)
+        {
+            sub.AddOption(Translator.Instance["weapon_type.primary"], (ply, opt) =>
+            {
+                var wsub = BuildWeaponSubMenu(
+                    data,
+                    Translator.Instance["weapon_type.primary"],
+                    data.PrimaryOptions,
+                    data.CurrentPrimary,
+                    (p, d, w) =>
+                    {
+                        d.CurrentPrimary = w;
+                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.FullBuy, w);
+                    },
+                    ply2 => BuildFullBuySubMenu(player, data, isVip, canUseEnemyStuff, zeusEnabledSetting)
+                );
                 MenuManager!.OpenSubMenu(ply, wsub);
             });
         }
@@ -326,18 +357,101 @@ public class AdvancedGunMenu
                     (p, d, w) =>
                     {
                         d.CurrentSecondary = w;
-                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.HalfBuy, w);
-                    });
-                MenuManager!.OpenMainMenu(ply, wsub);
+                        ApplyWeaponSelection(p, d.SteamId, d.Team, RoundType.FullBuy, w);
+                    },
+                    ply2 => BuildFullBuySubMenu(player, data, isVip, canUseEnemyStuff, zeusEnabledSetting)
+                );
+                MenuManager!.OpenSubMenu(ply, wsub);
             });
+        }
+
+        if (isVip)
+        {
+            sub.AddOption(Translator.Instance["guns_menu.sniper_label"], (ply, opt) =>
+            {
+                var ssub = BuildSniperSubMenu(data);
+                MenuManager!.OpenSubMenu(ply, ssub);
+            });
+        }
+
+        if (canUseEnemyStuff)
+        {
+            sub.AddOption(Translator.Instance["guns_menu.enemy_stuff_label"], (ply, opt) =>
+            {
+                var esub = BuildEnemyStuffSubMenu(data);
+                MenuManager!.OpenSubMenu(ply, esub);
+            });
+        }
+
+        if (zeusEnabledSetting)
+        {
+            var zeusChoices = new[]
+            {
+                Translator.Instance["guns_menu.zeus_choice_disable"],
+                Translator.Instance["guns_menu.zeus_choice_enable"]
+            };
+
+            sub.AddBoolOption(
+                Translator.Instance["guns_menu.zeus_label"],
+                defaultValue: data.ZeusEnabled,
+                (ply, option) =>
+                {
+                    var enabled = false;
+                    if (option is IT3Option opt && opt.DefaultValue is bool b)
+                    {
+                        enabled = b;
+                    }
+                    var choice = enabled ? zeusChoices[1] : zeusChoices[0];
+                    HandleZeusChoice(ply, data, choice, zeusChoices);
+                    MenuManager!.Refresh();
+                });
         }
 
         sub.AddOption(Translator.Instance["menu.exit"], (ply, opt) => { ShowMenu(ply, data); });
         return sub;
     }
 
-    private IT3Menu BuildWeaponSubMenu(GunMenuData data, string title, List<CsItem> items, CsItem? current,
-        Action<CCSPlayerController, GunMenuData, CsItem> onSelect)
+    private IT3Menu BuildPistolSubMenu(GunMenuData data)
+    {
+        var title = RoundTypeHelpers.TranslateRoundTypeName(RoundType.Pistol);
+        var sub = MenuManager!.CreateMenu(title, isSubMenu: true);
+
+        if (data.PistolOptions.Count > 0)
+        {
+            var current = data.CurrentPistol;
+            var items = data.PistolOptions;
+            var ordered = items;
+            if (current.HasValue)
+            {
+                ordered = items.OrderBy(i => i.Equals(current.Value) ? 0 : 1).ToList();
+            }
+
+            foreach (var item in ordered)
+            {
+                var w = item;
+                var isSelected = current.HasValue && current.Value == w;
+                var label = isSelected ? $"✔ {w.GetName()}" : w.GetName();
+                sub.AddOption(label, (ply, opt) =>
+                {
+                    data.CurrentPistol = w;
+                    ApplyWeaponSelection(ply, data.SteamId, data.Team, RoundType.Pistol, w);
+                    ShowMenu(ply, data);
+                });
+            }
+        }
+
+        sub.AddOption(Translator.Instance["menu.exit"], (ply, opt) => { ShowMenu(ply, data); });
+        return sub;
+    }
+
+    private IT3Menu BuildWeaponSubMenu(
+        GunMenuData data,
+        string title,
+        List<CsItem> items,
+        CsItem? current,
+        Action<CCSPlayerController, GunMenuData, CsItem> onSelect,
+        Func<CCSPlayerController, IT3Menu> getParentMenu
+    )
     {
         var sub = MenuManager!.CreateMenu(title, isSubMenu: true);
         var orderedItems = items;
@@ -356,7 +470,10 @@ public class AdvancedGunMenu
             sub.AddOption(label, (ply, opt) =>
             {
                 onSelect(ply, data, w);
-                MenuManager!.OpenSubMenu(ply, BuildWeaponSubMenu(data, title, items, w, onSelect));
+                // Reset root to main, then open the parent submenu to avoid stacking
+                ShowMenu(ply, data);
+                var parent = getParentMenu(ply);
+                MenuManager!.OpenSubMenu(ply, parent);
             });
         }
 
@@ -387,28 +504,32 @@ public class AdvancedGunMenu
         sub.AddOption(awpLabel, (ply, opt) =>
         {
             ApplySniperPreference(ply, data, CsItem.AWP);
-            MenuManager!.OpenSubMenu(ply, BuildSniperSubMenu(data));
+            sub.Title = $"{title} - {awp}";
+            MenuManager!.Refresh();
         });
 
         var ssgLabel = isSsg ? $"✔ {ssg}" : ssg;
         sub.AddOption(ssgLabel, (ply, opt) =>
         {
             ApplySniperPreference(ply, data, CsItem.Scout);
-            MenuManager!.OpenSubMenu(ply, BuildSniperSubMenu(data));
+            sub.Title = $"{title} - {ssg}";
+            MenuManager!.Refresh();
         });
 
         var randomLabel = isRandom ? $"✔ {random}" : random;
         sub.AddOption(randomLabel, (ply, opt) =>
         {
             ApplySniperPreference(ply, data, WeaponHelpers.RandomSniperPreference);
-            MenuManager!.OpenSubMenu(ply, BuildSniperSubMenu(data));
+            sub.Title = $"{title} - {random}";
+            MenuManager!.Refresh();
         });
 
         var disabledLabel = isDisabled ? $"✔ {disabled}" : disabled;
         sub.AddOption(disabledLabel, (ply, opt) =>
         {
             ApplySniperPreference(ply, data, null);
-            MenuManager!.OpenSubMenu(ply, BuildSniperSubMenu(data));
+            sub.Title = $"{title} - {disabled}";
+            MenuManager!.Refresh();
         });
 
         sub.AddOption(Translator.Instance["menu.back"], (ply, opt) =>
@@ -451,7 +572,8 @@ public class AdvancedGunMenu
             sub.AddOption(display, (ply, opt) =>
             {
                 HandleEnemyStuffChoice(ply, data, label, labels, values);
-                MenuManager!.OpenSubMenu(ply, BuildEnemyStuffSubMenu(data));
+                sub.Title = $"{title} - {label}";
+                MenuManager!.Refresh();
             });
         }
 
@@ -506,6 +628,24 @@ public class AdvancedGunMenu
         _ = Task.Run(async () =>
         {
             var result = await OnWeaponCommandHelper.HandleAsync(new[] { weaponName }, steamId, roundType, team, false);
+            // Mirror selection to the other team if union mode is enabled
+            try
+            {
+                var config = Configs.GetConfigData();
+                if (config.EnableAllWeaponsForEveryone)
+                {
+                    var otherTeam = team == CsTeam.Terrorist ? CsTeam.CounterTerrorist : CsTeam.Terrorist;
+                    var thisAlloc = WeaponHelpers.GetWeaponAllocationTypeForWeaponAndRound(roundType, team, weapon);
+                    if (thisAlloc.HasValue)
+                    {
+                        await Queries.SetWeaponPreferenceForUserAsync(steamId, otherTeam, thisAlloc.Value, weapon);
+                    }
+                }
+            }
+            catch
+            {
+                // best-effort mirror; ignore failures
+            }
             if (string.IsNullOrWhiteSpace(result.Item1))
             {
                 return;
